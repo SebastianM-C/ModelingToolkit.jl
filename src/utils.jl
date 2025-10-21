@@ -81,10 +81,18 @@ function rec_remove_macro_linenums!(expr)
     end
     expr
 end
+"""
+    readable_code(expr)
+
+Convert an expression to a readable string representation.
+
+When JuliaFormatter is loaded, the output will be formatted using `JuliaFormatter.SciMLStyle()`.
+Without JuliaFormatter, the expression is converted to a string without additional formatting.
+"""
 function readable_code(expr)
     expr = Base.remove_linenums!(_readable_code(expr))
     rec_remove_macro_linenums!(expr)
-    JuliaFormatter.format_text(string(expr), JuliaFormatter.SciMLStyle())
+    string(expr)
 end
 
 # System validation enums
