@@ -10,16 +10,38 @@
     isnothing(callback) || error("BVP solvers do not support callbacks.")
 
     dvs = unknowns(sys)
-    op = to_varmap(op, dvs)
-    # Systems without algebraic equations should use both fixed values + guesses
-    # for initialization.
-    _op = has_alg_eqs(sys) ? op : merge(Dict(op), Dict(guesses))
+    # Boundary conditions come from user op + system initial_conditions.
+    # Guesses are only for the solver's starting point, not enforced as BCs.
+    bc_op = merge(initial_conditions(sys), to_varmap(op, dvs))
+    op = merge(Dict(guesses), bc_op)
+
+    # Add zero guesses for dummy derivatives that aren't already in op.
+    # In the ODEProblem path this is handled by generate_initializesystem_timevarying,
+    # but BVP uses time_dependent_init = false, so we do it here instead.
+    if isscheduled(sys)
+        for (k, _) in get_schedule(sys).dummy_sub
+            ttk = default_toterm(k)
+            if !haskey(op, k) && !haskey(op, ttk)
+                op[ttk] = Bool(0)
+            end
+        end
+    end
+
+    M = calculate_massmatrix(sys)
+    if M !== I
+        for (i, dv) in enumerate(dvs)
+            if iszero(M[i, i]) && !haskey(op, dv)
+                op[dv] = Bool(0)
+            end
+        end
+    end
 
     fode, u0,
         p = process_SciMLProblem(
-        ODEFunction{iip, spec}, sys, _op; guesses,
+        ODEFunction{iip, spec}, sys, op; guesses,
         t = tspan !== nothing ? tspan[1] : tspan, check_compatibility = false, cse,
-        checkbounds, time_dependent_init = false, expression, kwargs...
+        checkbounds, time_dependent_init = false, build_initializeprob = false,
+        expression, kwargs...
     )
 
     fcost = generate_bvp_cost(
@@ -29,7 +51,7 @@
 
     stidxmap = Dict([v => i for (i, v) in enumerate(dvs)])
     u0_idxs = has_alg_eqs(sys) ? collect(1:length(dvs)) :
-        [stidxmap[k] for (k, v) in op if haskey(stidxmap, k)]
+        [stidxmap[k] for (k, v) in bc_op if haskey(stidxmap, k)]
     fbc = generate_boundary_conditions(
         sys, u0, u0_idxs, tspan[1]; expression = Val{false},
         wrap_gfw = Val{true}, cse, checkbounds
@@ -41,7 +63,7 @@
 
     bvpfn = BVPFunction{iip}(fode, fbc; cost = fcost, f_prototype, bcresid_prototype)
 
-    if (length(constraints(sys)) + length(op) > length(dvs))
+    if (length(constraints(sys)) + length(bc_op) > length(dvs))
         @warn "The BVProblem is overdetermined. The total number of conditions (# constraints + # fixed initial values given by op) exceeds the total number of states. The BVP solvers will default to doing a nonlinear least-squares optimization."
     end
 
