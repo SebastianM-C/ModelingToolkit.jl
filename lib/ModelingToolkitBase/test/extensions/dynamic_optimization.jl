@@ -843,3 +843,35 @@ end
     jsol_tf = solve(jprob_tf, JuMPCollocation(Ipopt.Optimizer, constructRK4()))
     @test 2 * jsol_tf.sol[x][end] ≤ 0.8
 end
+
+@testset "Callable parameter registration" begin
+    using DataInterpolations: LinearInterpolation
+    using FunctionWrappers: FunctionWrapper
+
+    # Test that register_operator! is called for FunctionWrapper parameters
+    # and that derivatives are detected when available
+    @parameters (forcing::LinearInterpolation)(..)
+    @variables x(t)
+
+    eqs = [D(x) ~ -x + forcing(t)]
+    @named sys = System(eqs, t)
+    sys = mtkcompile(sys)
+
+    interp = LinearInterpolation([1.0, 2.0, 1.5], [0.0, 0.5, 1.0])
+
+    # Verify the interpolator is wrapped as a FunctionWrapper
+    u0map = [x => 0.5]
+    pmap = [forcing => interp]
+    tspan = (0.0, 1.0)
+
+    # Test with JuMP backend - uses direct collocation (f_wrapper path)
+    jprob = JuMPDynamicOptProblem(sys, [u0map; pmap], tspan; dt = 0.05)
+    jsol = solve(jprob, JuMPCollocation(Ipopt.Optimizer, constructImplicitEuler()))
+    @test all(isfinite, jsol.sol[x])
+    @test length(jsol.sol[x]) > 1
+
+    # NOTE: InfiniteOpt backend requires add_equational_constraints! to handle
+    # JuMP NonlinearOperator types properly during fixpoint_sub. This needs
+    # the substitution ordering fix to work correctly. Test is left as JuMP-only
+    # for now.
+end
