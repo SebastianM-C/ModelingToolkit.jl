@@ -11,6 +11,7 @@ using UnPack
 using Symbolics: unwrap
 import SymbolicUtils
 import NaNMath
+import FunctionWrappers
 const MTK = ModelingToolkitBase
 
 function __init__()
@@ -102,6 +103,34 @@ function MTK.generate_timescale!(m::InfiniteModel, guess, is_free_t)
         set_start_value(tₛ, 1)
     end
     return tₛ
+end
+
+function MTK.register_operator!(m::InfiniteOptModel, dim, val::FunctionWrappers.FunctionWrapper, name)
+    underlying = val.obj[]
+    syms = ntuple(i -> Symbolics.variable(Symbol(:_arg, i)), dim)
+    d1 = Symbolics._derivative_rule_proxy(underlying, syms, Val(1))
+    if !isnothing(d1)
+        d1_unwrapped = unwrap(d1)
+        op = operation(d1_unwrapped)
+        args = arguments(d1_unwrapped)
+        sym_positions = Dict(unwrap(s) => i for (i, s) in enumerate(syms))
+        arg_specs = map(args) do a
+            a_uw = unwrap(a)
+            idx = get(sym_positions, a_uw, nothing)
+            !isnothing(idx) ? (:var, idx) : (:const, SymbolicUtils.unwrap_const(a_uw))
+        end
+        ∇f = function(x_args...)
+            realized = map(arg_specs) do (kind, v)
+                kind === :var ? x_args[v] : v
+            end
+            op(realized...)
+        end
+        f = (x_args...) -> val(x_args...)
+        return add_nonlinear_operator(m.model, dim, f, ∇f; name)
+    else
+        f = (x_args...) -> val(x_args...)
+        return add_nonlinear_operator(m.model, dim, f; name)
+    end
 end
 
 function MTK.add_constraint!(m::InfiniteOptModel, expr::Union{Equation, Inequality})

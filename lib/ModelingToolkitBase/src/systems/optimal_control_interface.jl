@@ -358,6 +358,13 @@ function process_DynamicOptProblem(
 
     merge!(pmap, Dict(tunable_params .=> P_syms))
 
+    # Register callable parameters (e.g. FunctionWrapper-based interpolators)
+    for (sym, val) in pmap
+        val isa FunctionWrapper || continue
+        dim = fieldcount(typeof(val).parameters[2])  # number of args from Tuple type
+        pmap[sym] = register_operator!(fullmodel, dim, val, nameof(sym))
+    end
+
     set_variable_bounds!(fullmodel, sys, pmap, tspan[2], tunable_params, bounds)
     add_cost_function!(fullmodel, sys, tspan, pmap)
     add_user_constraints!(fullmodel, sys, tspan, pmap)
@@ -366,6 +373,7 @@ function process_DynamicOptProblem(
     return prob_type(f, u0, tspan, p, fullmodel, kwargs...), pmap
 end
 
+function register_operator! end
 function generate_time_variable! end
 function generate_internal_model end
 function generate_state_variable! end
