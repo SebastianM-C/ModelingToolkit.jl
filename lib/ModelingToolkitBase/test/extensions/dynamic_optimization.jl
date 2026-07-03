@@ -10,6 +10,8 @@ using DataInterpolations: ConstantInterpolation
 using CasADi
 # using Pyomo
 using Test
+using DataInterpolations: LinearInterpolation
+using FunctionWrappers: FunctionWrapper
 
 import DiffEqBase: solve
 const M = ModelingToolkitBase
@@ -845,9 +847,6 @@ end
 end
 
 @testset "Callable parameter registration" begin
-    using DataInterpolations: LinearInterpolation
-    using FunctionWrappers: FunctionWrapper
-
     # Test that register_operator! is called for FunctionWrapper parameters
     # and that derivatives are detected when available
     @parameters (forcing::LinearInterpolation)(..)
@@ -857,21 +856,25 @@ end
     @named sys = System(eqs, t)
     sys = mtkcompile(sys)
 
-    interp = LinearInterpolation([1.0, 2.0, 1.5], [0.0, 0.5, 1.0])
+    # Constant extrapolation is required for the InfiniteOpt backend: MOI builds the
+    # Lagrangian Hessian by running ForwardDiff over the operator's gradient, which
+    # perturbs `t` past the last knot at the boundary collocation point.
+    interp = LinearInterpolation([1.0, 2.0, 1.5], [0.0, 0.5, 1.0];
+        extrapolation = ExtrapolationType.Constant)
 
-    # Verify the interpolator is wrapped as a FunctionWrapper
     u0map = [x => 0.5]
     pmap = [forcing => interp]
     tspan = (0.0, 1.0)
 
-    # Test with JuMP backend - uses direct collocation (f_wrapper path)
+    # JuMP backend: direct collocation evaluates the callable at numeric time points.
     jprob = JuMPDynamicOptProblem(sys, [u0map; pmap], tspan; dt = 0.05)
     jsol = solve(jprob, JuMPCollocation(Ipopt.Optimizer, constructImplicitEuler()))
     @test all(isfinite, jsol.sol[x])
     @test length(jsol.sol[x]) > 1
 
-    # NOTE: InfiniteOpt backend requires add_equational_constraints! to handle
-    # JuMP NonlinearOperator types properly during fixpoint_sub. This needs
-    # the substitution ordering fix to work correctly. Test is left as JuMP-only
-    # for now.
+    # InfiniteOpt backend: the callable is registered as a JuMP nonlinear operator and
+    # the equational constraints substitute it in symbolically (see register_operator!).
+    iprob = InfiniteOptDynamicOptProblem(sys, [u0map; pmap], tspan; dt = 0.05)
+    isol = solve(iprob, InfiniteOptCollocation(Ipopt.Optimizer))
+    @test isol.sol[x][end] > isol.sol[x][begin]
 end
