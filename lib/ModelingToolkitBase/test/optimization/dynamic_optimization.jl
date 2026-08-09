@@ -959,6 +959,8 @@ end
     @test_throws ArgumentError InfiniteOptDynamicOptProblem(
         bsys, bop, btspan; dt = 0.01, observed_bounds_method = :bogus
     )
+end
+
 struct UnsupportedTrajectoryBackend end
 
 @testset "Expression-valued initial trajectories" begin
