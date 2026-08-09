@@ -475,7 +475,8 @@ function process_DynamicOptProblem(
 
     set_variable_bounds!(fullmodel, sys, pmap, tspan, tunable_params, bounds)
     add_observed_bounds!(
-        fullmodel, sys, pmap, tspan, tunable_params, bounds, observed_bounds_method
+        fullmodel, sys, pmap, tspan, tunable_params, bounds, observed_bounds_method,
+        nominal_values
     )
     add_cost_function!(fullmodel, sys, tspan, pmap)
     add_user_constraints!(fullmodel, sys, tspan, pmap)
@@ -715,7 +716,8 @@ Enforce bounds declared on observed variables.
     everywhere else.
 """
 function add_observed_bounds!(
-        model, sys, pmap, tspan, tunable_params, user_bounds, method = :auto
+        model, sys, pmap, tspan, tunable_params, user_bounds, method = :auto,
+        nominal_values = Dict()
     )
     (; observed_bounds) = extract_variable_bounds(
         sys, pmap, tspan, tunable_params, user_bounds
@@ -732,9 +734,10 @@ function add_observed_bounds!(
     for (var, (lo, hi)) in observed_bounds
         if method === :lift
             expr = fixpoint_sub(var, rules; fold = Val(true), filterer = Returns(true))
-            lift_observed_bound!(
-                model, expr, lo, hi, getnominal(var), aux_start_value(lo, hi)
-            )
+            # A user-supplied nominal value overrides the metadata, mirroring the
+            # residual scaling of the dynamics constraints.
+            scale = get(nominal_values, var, getnominal(var))
+            lift_observed_bound!(model, expr, lo, hi, scale, aux_start_value(lo, hi))
         else
             cons = Any[]
             isfinite(lo) && push!(cons, var ≳ lo)
