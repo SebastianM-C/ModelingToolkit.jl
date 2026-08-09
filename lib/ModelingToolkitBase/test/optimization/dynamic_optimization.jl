@@ -1032,3 +1032,76 @@ struct UnsupportedTrajectoryBackend end
     @parameters b
     @test_throws ArgumentError M.build_trajectory_function(block, x(t), b * t, p_test)
 end
+
+@testset "Residual scaling of dynamics constraints" begin
+    # Double integrator with scales - should converge to same answer
+    @variables x(..) v(..)
+    @variables u(..) [bounds = (-1.0, 1.0), input = true]
+    constr = [v(1.0) ~ 0.0]
+    cost = [-x(1.0)]
+
+    @named block = System(
+        [D(x(t)) ~ v(t), D(v(t)) ~ u(t)], t; costs = cost, constraints = constr
+    )
+    block = mtkcompile(block; inputs = [u(t)])
+
+    u0map = [x(t) => 0.0, v(t) => 0.0]
+    tspan = (0.0, 1.0)
+    parammap = [u(t) => 0.0]
+
+    # With scaling
+    scales = Dict(x(t) => 10.0, v(t) => 1.0)
+    iprob = InfiniteOptDynamicOptProblem(
+        block, [u0map; parammap], tspan; dt = 0.01,
+        scales = scales
+    )
+    isol = solve(iprob, InfiniteOptCollocation(Ipopt.Optimizer))
+    @test ≈(isol.sol[x(t)][end], 0.25, rtol = 1.0e-3)
+
+    # Without scaling - should also work
+    iprob2 = InfiniteOptDynamicOptProblem(block, [u0map; parammap], tspan; dt = 0.01)
+    isol2 = solve(iprob2, InfiniteOptCollocation(Ipopt.Optimizer))
+    @test ≈(isol2.sol[x(t)][end], 0.25, rtol = 1.0e-3)
+
+    # Scales kwarg passes through JuMP without error
+    jprob = JuMPDynamicOptProblem(
+        block, [u0map; parammap], tspan; dt = 0.01,
+        scales = scales
+    )
+    jsol = solve(jprob, JuMPCollocation(Ipopt.Optimizer, ExplicitTableaus.Verner8()))
+    @test ≈(jsol.sol[x(t)][end], 0.25, rtol = 1.0e-3)
+
+    if ENABLE_CASADI
+        cprob = CasADiDynamicOptProblem(
+            block, [u0map; parammap], tspan; dt = 0.01,
+            scales = scales
+        )
+        csol = solve(cprob, CasADiCollocation("ipopt", ExplicitTableaus.Verner8()))
+        @test ≈(csol.sol[x(t)][end], 0.25, rtol = 1.0e-3)
+    end
+
+    # Scaling a residual does not move the optimum, so the solves above pass with or
+    # without `scales` and cannot tell whether the scale was applied at all. Assert
+    # directly that it reaches the dynamics constraint.
+    function dynamics_constraint_strings(scales)
+        prob = InfiniteOptDynamicOptProblem(
+            block, [u0map; parammap], tspan; dt = 0.5, scales = scales
+        )
+        m = prob.wrapped_model.model
+        strs = String[]
+        for (F, S) in InfiniteOpt.list_of_constraint_types(m)
+            for c in InfiniteOpt.all_constraints(m, F, S)
+                push!(strs, string(InfiniteOpt.constraint_object(c).func))
+            end
+        end
+        return strs
+    end
+
+    unscaled = dynamics_constraint_strings(Dict())
+    rescaled = dynamics_constraint_strings(Dict(x(t) => 10.0))
+    @test length(unscaled) == length(rescaled)
+    # Only the constraint for `x` changes, and it picks up the 1/10 factor.
+    changed = [(a, b) for (a, b) in zip(unscaled, rescaled) if a != b]
+    @test length(changed) == 1
+    @test occursin("0.1", last(only(changed)))
+end
