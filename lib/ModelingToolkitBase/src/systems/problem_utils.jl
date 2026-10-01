@@ -1741,8 +1741,12 @@ function _static_initialization_buffer(prototype, values)
         #
         # Filled explicitly rather than with `collect`, because StaticArrays overloads
         # `collect` to preserve staticness: `collect(T, ::SVector)` returns a
-        # `SizedVector`, not a `Vector`.
-        buffer = Vector{T}(undef, length(values))
+        # `SizedVector`, not a `Vector`. `Bool` buffers are `BitVector`s and stay so.
+        buffer = if P <: BitArray && T === Bool
+            BitVector(undef, length(values))
+        else
+            Vector{T}(undef, length(values))
+        end
         for (i, value) in enumerate(values)
             buffer[i] = value
         end
@@ -1844,14 +1848,12 @@ function _construct_fullspecialize_initializeprobpmap(
                 offset += length(syms)
                 buffer = _parameter_buffer_expr(prototype, raw, idxs, p_constructor)
                 if field === :discrete
-                    sizes = get_index_cache(sys).discrete_buffer_sizes[buffer_idx]
-                    block_sizes = Expr(:call, Expr(:curly, SVector, length(sizes), Int))
-                    for sz in sizes
-                        push!(block_sizes.args, sz.length)
-                    end
-                    p_constructor === identity ||
-                        (block_sizes = Expr(:call, QuoteNode(p_constructor), block_sizes))
-                    buffer = Expr(:call, BlockedArray, buffer, block_sizes)
+                    # The block structure does not change. Take it from the problem's own
+                    # buffer so the rebuilt one has exactly its axes type (static or not),
+                    # which an in-place solve needs to assign it back.
+                    buffer = Expr(
+                        :call, BlockedArray, buffer, Expr(:call, GlobalRef(Base, :axes), prototype)
+                    )
                 end
                 push!(buffers, buffer)
             end

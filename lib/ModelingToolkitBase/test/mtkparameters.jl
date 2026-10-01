@@ -567,6 +567,37 @@ end
     @test sols[1][x] == sols[2][x]
 end
 
+@testset "In-place `FullSpecialize` with a discrete and a `Bool` constant" begin
+    # The initialization map has to rebuild `p` with exactly the problem's types, since an
+    # in-place solve assigns it back: `Vector` block boundaries of the discrete buffer and
+    # the `BitVector` of `Bool` constants used to come back as `SVector` / `Vector{Bool}`.
+    @variables x(t) y(t)
+    @parameters k = 2.0 flag::Bool = true
+    @discretes g(t) = 1.0
+    ev = ModelingToolkitBase.SymbolicContinuousCallback(
+        [x ~ 0.5], [g ~ min(Pre(g) + 1, 3.0)]; discrete_parameters = [g]
+    )
+    @named sys = System(
+        [D(x) ~ ifelse(flag, -k * g * x, 0.0), y ~ x^3 + x], t, [x, y], [k, flag, g];
+        continuous_events = [ev]
+    )
+    sys = mtkcompile(sys)
+    ref = solve(
+        ODEProblem(sys, [y => 3.0], (0.0, 2.0); guesses = [x => 1.0]), Tsit5();
+        abstol = 1.0e-10, reltol = 1.0e-10
+    )
+    for passthrough in (false, true)
+        prob = ODEProblem{true, SciMLBase.FullSpecialize}(
+            sys, [y => 3.0], (0.0, 2.0); guesses = [x => 1.0],
+            initialization_parameter_passthrough = passthrough
+        )
+        @test prob.p.constant[1] isa BitVector
+        sol = solve(prob, Tsit5(); abstol = 1.0e-10, reltol = 1.0e-10)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol[x][end] ≈ ref[x][end]
+    end
+end
+
 @testset "MTKParameters can be made `isbits`" begin
     @variables x(t)
     @parameters p
