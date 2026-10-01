@@ -1211,7 +1211,10 @@ function MTKParametersReconstructor(
     else
         p_constructor ∘ CopyParamsByTemplate(srcsys, tunable_syms; kwargs...)
     end
-    initials_getter = if initials && !isempty(syms[2])
+    # An initialization system keeps its non-tunable initial values (see
+    # `subset_tunables(...; initials)`) in its own `initials` portion, which then has to be
+    # filled from `srcsys` as well.
+    initials_getter = if (initials || is_initializesystem(dstsys)) && !isempty(syms[2])
         initsyms = syms[2]::Vector{SymbolicT}
         unwrap_initials && _unwrap_initial_symbols!(initsyms, srcsys)
         p_constructor ∘ CopyParamsByTemplate(srcsys, initsyms; kwargs...)

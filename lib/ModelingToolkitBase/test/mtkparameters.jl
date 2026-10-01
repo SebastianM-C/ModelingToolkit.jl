@@ -521,6 +521,23 @@ end
     @test sol[x][1] ≈ exact_x0(4.0)
 
     @test_throws ArgumentError subset_tunables(sys, [k]; initials = [k])
+
+    @testset "Array variables" begin
+        # array `Initial`s are rebuilt from scalarized parts in `complete`; their
+        # tunability must survive that, and they stay in the flat `initials` portion
+        @variables xs(t)[1:3] ys(t)[1:3]
+        @named asys = System([D(xs) ~ -k .* xs, ys ~ 2 .* xs], t)
+        asys = subset_tunables(mtkcompile(asys), [k]; initials = [])
+        aprob = ODEProblem(asys, [xs => [1.0, 2.0, 3.0]], (0.0, 1.0))
+        a_initials = Set(filter(!ModelingToolkitBase.__no_initial_params_pred, parameters(asys; initial_parameters = true)))
+        @test isdisjoint(a_initials, init_tunables(aprob))
+        initp = aprob.f.initialization_data.initializeprob.p
+        @test length(initp.initials) == length(aprob.p.initials)
+        @test isempty(initp.constant)
+        asol = solve(aprob, Tsit5())
+        @test SciMLBase.successful_retcode(asol)
+        @test asol[ys][1] ≈ [2.0, 4.0, 6.0]
+    end
 end
 
 @testset "MTKParameters can be made `isbits`" begin

@@ -713,7 +713,8 @@ function complete(
         # Ideally we'd do `get_ps` but if `flatten = false`
         # we don't get all of them. So we call `parameters`.
         all_ps = parameters(sys; initial_parameters = true)
-        all_ps_set = Set{SymbolicT}(all_ps)
+        # maps each parameter to the instance the system holds (with its metadata)
+        all_ps_set = Dict{SymbolicT, SymbolicT}(p => p for p in all_ps)
         # inputs have to be maintained in a specific order
         input_vars = inputs(sys)
         if !isempty(all_ps)
@@ -865,7 +866,9 @@ parameters in the system `all_ps`, unscalarize the elements in `params` and appe
 to `buffer` in the same order as they are present in `params`. Effectively, if
 `params = [p[1], p[2], p[3], q]` then this is equivalent to `push!(buffer, p, q)`.
 """
-function unflatten_parameters!(buffer::Vector{SymbolicT}, params::Vector{SymbolicT}, all_ps::Set{SymbolicT})
+function unflatten_parameters!(
+        buffer::Vector{SymbolicT}, params::Vector{SymbolicT}, all_ps::Dict{SymbolicT, SymbolicT}
+    )
     i = 1
     # go through all the tunables
     while i <= length(params)
@@ -874,7 +877,7 @@ function unflatten_parameters!(buffer::Vector{SymbolicT}, params::Vector{Symboli
         # just push it as-is
         arrsym, isarr = split_indexed_var(sym)
         if !isarr || !symbolic_has_known_size(arrsym)
-            push!(buffer, sym)
+            push!(buffer, get(all_ps, sym, sym))
             i += 1
             continue
         end
@@ -887,7 +890,10 @@ function unflatten_parameters!(buffer::Vector{SymbolicT}, params::Vector{Symboli
                 error("This should not be possible. Please open an issue in ModelingToolkitBase.jl with an MWE and stacktrace.")
             end
         end
-        push!(buffer, arrsym)
+        # `arrsym` comes from a hash-consed `getindex` term, which may hold an older copy of
+        # the array symbol (metadata is not part of the hash), e.g. from before
+        # `subset_tunables` changed its tunability. Use the system's own instance.
+        push!(buffer, get(all_ps, arrsym, arrsym))
         i += length(arrsym)
     end
     return

@@ -201,13 +201,12 @@ function IndexCache(sys::AbstractSystem)
         haskey(disc_idxs, p) && continue
         haskey(constant_buffers, ctype) && p in constant_buffers[ctype] && continue
         haskey(nonnumeric_buffers, ctype) && p in nonnumeric_buffers[ctype] && continue
-        # Outside initialization systems, `Initial` parameters always live in the
-        # `initials` portion: their tunability only matters to the initialization system,
-        # where it decides whether they are tunable (see `subset_tunables(...; initials)`).
+        # `Initial` parameters always go to `initial_pars`, whatever their tunability; the
+        # initialization system then moves the tunable ones into the tunables below.
         is_initial_par = iscall(p) && operation(p) === Initial()
         insert_by_type!(
             if ctype <: Number || ctype <: AbstractArray{<:Number}
-                if (istunable(p, true) || is_initial_par && !is_initializesystem(sys)) &&
+                if (istunable(p, true) || is_initial_par) &&
                         symbolic_has_known_size(p) &&
                         (
                         ctype == Real || ctype == Number || ctype == Complex ||
@@ -243,8 +242,14 @@ function IndexCache(sys::AbstractSystem)
     tunable_idxs = TunableIndexMap()
     tunable_buffer_size = 0
     if is_initializesystem(sys)
-        append!(tunable_pars, initial_pars)
-        empty!(initial_pars)
+        # Initial values are tunables of the initialization system, so that differentiating
+        # through initialization reaches the initial conditions. Those made non-tunable (see
+        # `subset_tunables(...; initials)`) stay in its `initials` portion: the same flat
+        # layout they have in the parent system.
+        for p in initial_pars
+            istunable(p, true) && push!(tunable_pars, p)
+        end
+        filter!(p -> !istunable(p, true), initial_pars)
     end
     for p in tunable_pars
         sh = SU.shape(p)
