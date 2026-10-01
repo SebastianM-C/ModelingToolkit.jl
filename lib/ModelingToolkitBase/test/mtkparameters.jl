@@ -477,6 +477,52 @@ if @isdefined(ModelingToolkit)
     end
 end
 
+@testset "`subset_tunables` with `initials`" begin
+    @variables x(t) y(t)
+    @parameters k = 2.0 a = 0.1
+    @named sys = System([D(x) ~ -k * x + a, y ~ x^3 + x], t)
+    sys = mtkcompile(sys)
+    initsys(prob) = prob.f.initialization_data.initializeprob.f.sys
+    init_tunables(prob) = Set(tunable_parameters(initsys(prob), parameters(initsys(prob); initial_parameters = true)))
+    # x(0) solves x^3 + x = y(0)
+    function exact_x0(y0)
+        z = 1.0
+        for _ in 1:60
+            z -= (z^3 + z - y0) / (3z^2 + 1)
+        end
+        return z
+    end
+    all_initials = Set(filter(!ModelingToolkitBase.__no_initial_params_pred, parameters(sys; initial_parameters = true)))
+
+    probs = Dict(
+        :default => ODEProblem(subset_tunables(sys, [k]), [y => 3.0], (0.0, 1.0); guesses = [x => 1.0]),
+        :none => ODEProblem(subset_tunables(sys, [k]; initials = []), [y => 3.0], (0.0, 1.0); guesses = [x => 1.0]),
+        :y => ODEProblem(subset_tunables(sys, [k]; initials = [y]), [y => 3.0], (0.0, 1.0); guesses = [x => 1.0])
+    )
+    # the main problem's layout does not depend on `initials`
+    for prob in values(probs)
+        @test length(prob.p.tunable) == 1
+        @test length(prob.p.initials) == length(probs[:default].p.initials)
+    end
+    # all initial values stay tunable in the initialization system by default
+    @test issubset(all_initials, init_tunables(probs[:default]))
+    @test isdisjoint(all_initials, init_tunables(probs[:none]))
+    @test intersect(all_initials, init_tunables(probs[:y])) == Set([Initial(y)])
+    @test k in init_tunables(probs[:none])
+
+    sols = Dict(name => solve(prob, Tsit5(); abstol = 1.0e-10, reltol = 1.0e-10) for (name, prob) in probs)
+    for sol in values(sols)
+        @test SciMLBase.successful_retcode(sol)
+        @test sol[x][1] ≈ exact_x0(3.0)
+        @test sol[x][end] ≈ sols[:default][x][end]
+    end
+    # a sweep over the remaining tunable initial value
+    sol = solve(remake(probs[:y]; u0 = [y => 4.0]), Tsit5(); abstol = 1.0e-10, reltol = 1.0e-10)
+    @test sol[x][1] ≈ exact_x0(4.0)
+
+    @test_throws ArgumentError subset_tunables(sys, [k]; initials = [k])
+end
+
 @testset "MTKParameters can be made `isbits`" begin
     @variables x(t)
     @parameters p

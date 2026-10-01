@@ -588,9 +588,16 @@ function add_initialization_parameters(sys::AbstractSystem; split = true, _unhac
         end
     end
 
+    # Reuse `Initial` parameters the system already has, so their metadata survives
+    # re-completion (e.g. the tunability `subset_tunables(...; initials)` sets).
+    existing_initials = Dict{SymbolicT, SymbolicT}()
+    for p in get_ps(sys)
+        isinitial(p) && (existing_initials[p] = p)
+    end
     initials = collect(all_initialvars)
     for (i, v) in enumerate(initials)
-        initials[i] = Initial()(v)
+        ip = Initial()(v)
+        initials[i] = get(existing_initials, ip, ip)
     end
     @set! sys.ps = unique!([filter(!isinitial, get_ps(sys)); initials])
     return sys

@@ -140,8 +140,17 @@ Change the tunable parameters of a system to a new set of tunables.
 
 The new tunable parameters must be a subset of the current tunables as discovered by [`tunable_parameters`](@ref).
 The remaining parameters will be set as constants in the system.
+
+# Keyword arguments
+
+- `initials`: the initial values that should stay tunable in the initialization system, given
+  as variables (`x`, `D(x)`) or as `Initial(x)`. Every other `Initial` parameter becomes a
+  constant of the initialization system. The default, `nothing`, keeps all of them tunable,
+  which is what differentiating through initialization with respect to the initial conditions
+  needs. `initials = []` keeps none. Outside the initialization system, `Initial` parameters
+  are unaffected: they stay in the `initials` portion.
 """
-function subset_tunables(sys, new_tunables)
+function subset_tunables(sys, new_tunables; initials = nothing)
     if !iscomplete(sys)
         throw(ArgumentError("System must be `complete` before changing tunables."))
     end
@@ -160,6 +169,19 @@ function subset_tunables(sys, new_tunables)
                 """
             )
         )
+    end
+    if initials !== nothing
+        cur_initials = filter(!__no_initial_params_pred, parameters(sys; initial_parameters = true))
+        keep_initials = SymbolicT[Initial(unwrap(x)) for x in initials]
+        unknown_initials = setdiff(keep_initials, cur_initials)
+        if !isempty(unknown_initials)
+            throw(
+                ArgumentError(
+                    "`initials` contains values the system has no `Initial` parameter for: $unknown_initials."
+                )
+            )
+        end
+        append!(diff_params, setdiff(cur_initials, keep_initials))
     end
     cur_ps = copy(get_ps(sys))
     const_ps = toconstant.(diff_params)

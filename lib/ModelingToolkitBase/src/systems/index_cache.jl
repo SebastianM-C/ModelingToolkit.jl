@@ -201,9 +201,14 @@ function IndexCache(sys::AbstractSystem)
         haskey(disc_idxs, p) && continue
         haskey(constant_buffers, ctype) && p in constant_buffers[ctype] && continue
         haskey(nonnumeric_buffers, ctype) && p in nonnumeric_buffers[ctype] && continue
+        # Outside initialization systems, `Initial` parameters always live in the
+        # `initials` portion: their tunability only matters to the initialization system,
+        # where it decides whether they are tunable (see `subset_tunables(...; initials)`).
+        is_initial_par = iscall(p) && operation(p) === Initial()
         insert_by_type!(
             if ctype <: Number || ctype <: AbstractArray{<:Number}
-                if istunable(p, true) && symbolic_has_known_size(p) &&
+                if (istunable(p, true) || is_initial_par && !is_initializesystem(sys)) &&
+                        symbolic_has_known_size(p) &&
                         (
                         ctype == Real || ctype == Number || ctype == Complex ||
                             ctype <: AbstractFloat || ctype <: Complex ||
@@ -212,7 +217,7 @@ function IndexCache(sys::AbstractSystem)
                             ctype <: AbstractArray{<:AbstractFloat} ||
                             ctype <: AbstractArray{<:Complex}
                     )
-                    if iscall(p) && operation(p) === Initial()
+                    if is_initial_par
                         initial_pars
                     else
                         tunable_pars
