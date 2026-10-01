@@ -540,6 +540,33 @@ end
     end
 end
 
+@testset "`initialization_parameter_passthrough`" begin
+    @variables x(t) y(t)
+    @parameters k = 2.0 q a = 0.5
+    @named sys = System(
+        [D(x) ~ -k * x + q + a, y ~ x + q], t; bindings = [q => missing], guesses = [q => 1.0]
+    )
+    sys = subset_tunables(mtkcompile(sys), [k, q]; initials = [])
+    function passthrough_problem(passthrough)
+        return ODEProblem{false, SciMLBase.FullSpecialize}(
+            sys, [x => 1.0, y => 3.0], (0.0, 1.0); initialization_parameter_passthrough = passthrough
+        )
+    end
+    sols = map((false, true)) do passthrough
+        prob = passthrough_problem(passthrough)
+        data = prob.f.initialization_data
+        newp = data.initializeprobpmap(prob, solve(data.initializeprob))
+        # `q` is solved by initialization, so its (tunable) buffer is always rebuilt;
+        # the constant and `initials` buffers are only passed through on request
+        @test (newp.constant[1] === prob.p.constant[1]) == passthrough
+        @test (newp.initials === prob.p.initials) == passthrough
+        @test getp(sys, q)(newp) ≈ 2.0
+        solve(prob, Tsit5(); abstol = 1.0e-10, reltol = 1.0e-10)
+    end
+    @test all(SciMLBase.successful_retcode, sols)
+    @test sols[1][x] == sols[2][x]
+end
+
 @testset "MTKParameters can be made `isbits`" begin
     @variables x(t)
     @parameters p

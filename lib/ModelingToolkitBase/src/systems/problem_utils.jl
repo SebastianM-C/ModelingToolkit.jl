@@ -1762,9 +1762,22 @@ function _parameter_buffer_expr(prototype, raw::Symbol, idxs, p_constructor)
     return Expr(:call, QuoteNode(p_constructor), buffer)
 end
 
+"""
+    $(TYPEDSIGNATURES)
+
+Generate the `FullSpecialize` map that rebuilds the problem's `MTKParameters` from the
+solution of the initialization problem.
+
+With `passthrough = true`, every buffer none of whose parameters the initialization solves
+for (`solved_ps`) is passed through from the problem's own parameter object instead of being
+rebuilt from the initialization problem, and so is the `initials` buffer. That lets those
+buffers be shared read-only storage (e.g. on a GPU), but the map then no longer depends on the
+initialization problem's values for them: differentiating through initialization would not see
+them, and `Initial(x)` keeps its value from before initialization. Off by default.
+"""
 function _construct_fullspecialize_initializeprobpmap(
         sys::AbstractSystem, initsys::AbstractSystem, gen_opts::GeneratedFunctionOptions;
-        p_constructor
+        p_constructor, solved_ps = SymbolicT[], passthrough::Bool = false
     )
     ps = parameters(sys; initial_parameters = true)
     # One entry per `MTKParameters` portion, each holding that portion's buffers. Kept a
@@ -1783,9 +1796,24 @@ function _construct_fullspecialize_initializeprobpmap(
     else
         push!(groups, Vector{SymbolicT}[ps])
     end
+    portion_fields = (:tunable, :initials, :discrete, :constant, :nonnumeric)
+    # An array parameter counts as solved if any of its elements is.
+    solved = Set{SymbolicT}()
+    for p in solved_ps
+        push!(solved, p)
+        push!(solved, split_indexed_var(p)[1])
+    end
+    buffer_passthrough = Vector{Vector{Bool}}(undef, length(groups))
+    for (gi, group) in enumerate(groups)
+        buffer_passthrough[gi] = map(group) do syms
+            (passthrough && is_split(sys)) || return false
+            portion_fields[gi] === :initials && return true
+            return !any(in(solved), syms)
+        end
+    end
     flat_syms = SymbolicT[]
-    for group in groups, buffer in group
-        append!(flat_syms, buffer)
+    for (gi, group) in enumerate(groups), (bi, buffer) in enumerate(group)
+        buffer_passthrough[gi][bi] || append!(flat_syms, buffer)
     end
     expr = build_explicit_observed_function(initsys, Tuple(flat_syms), gen_opts)
     prob = INITMAP_PROBLEM
@@ -1801,15 +1829,19 @@ function _construct_fullspecialize_initializeprobpmap(
 
         offset = 0
         portions = Expr[]
-        for (field, group) in zip((:tunable, :initials, :discrete, :constant, :nonnumeric), groups)
+        for (gi, (field, group)) in enumerate(zip(portion_fields, groups))
             buffers = Expr[]
             for (buffer_idx, syms) in enumerate(group)
-                idxs = (offset + 1):(offset + length(syms))
-                offset += length(syms)
                 prototype = Expr(:., outer_p, QuoteNode(field))
                 if field !== :tunable && field !== :initials
                     prototype = Expr(:ref, prototype, buffer_idx)
                 end
+                if buffer_passthrough[gi][buffer_idx]
+                    push!(buffers, prototype)
+                    continue
+                end
+                idxs = (offset + 1):(offset + length(syms))
+                offset += length(syms)
                 buffer = _parameter_buffer_expr(prototype, raw, idxs, p_constructor)
                 if field === :discrete
                     sizes = get_index_cache(sys).discrete_buffer_sizes[buffer_idx]
@@ -2131,6 +2163,10 @@ function maybe_build_initialization_problem(
         opts::SciMLProblemOptions;
         specialize = SciMLBase.AutoDespecialize,
         map_specialize = specialize,
+        # `true` lets the `FullSpecialize` parameter map pass through the buffers initialization
+        # does not solve for, including `initials` (e.g. when they are shared read-only storage
+        # on a GPU); see `_construct_fullspecialize_initializeprobpmap`.
+        initialization_parameter_passthrough::Bool = false,
         # Intercept `expression` because we don't support it here yet
         expression = Val{false}, kwargs...
     )
@@ -2255,7 +2291,8 @@ function maybe_build_initialization_problem(
         initializeprobpmap = nothing
     elseif map_specialize === SciMLBase.FullSpecialize
         initializeprobpmap = _construct_fullspecialize_initializeprobpmap(
-            sys, initsys, _fullspecialize_map_options(opts); p_constructor
+            sys, initsys, _fullspecialize_map_options(opts); p_constructor,
+            solved_ps = punknowns, passthrough = initialization_parameter_passthrough
         )
     else
         initializeprobpmap = construct_initializeprobpmap(
