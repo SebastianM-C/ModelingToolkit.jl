@@ -2727,7 +2727,8 @@ end
 function process_kwargs(
         sys::System; expression = Val{false}, callback = nothing,
         eval_expression = false, eval_module = @__MODULE__,
-        _skip_events = false, _skip_tstops = false, tspan = nothing, kwargs...
+        _skip_events = false, _skip_tstops = false, tspan = nothing,
+        affect_transform = nothing, save_discretes::Bool = true, kwargs...
     )
     kwargs = filter_kwargs(kwargs)
     kwargs1 = (;)
@@ -2736,7 +2737,8 @@ function process_kwargs(
         if expression == Val{false} && !_skip_events
             cbs = if _has_symbolic_events(sys)
                 @invokelatest process_events(
-                    sys; callback, eval_expression, eval_module, tspan, kwargs...
+                    sys; callback, eval_expression, eval_module, tspan, affect_transform,
+                    save_discretes, kwargs...
                 )
             else
                 callback
