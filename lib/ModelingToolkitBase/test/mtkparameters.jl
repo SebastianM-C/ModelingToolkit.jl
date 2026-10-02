@@ -567,6 +567,30 @@ end
     @test sols[1][x] == sols[2][x]
 end
 
+@testset "`p_constructor` that changes the eltype, with a discrete" begin
+    # `p_constructor` used to be applied to the block sizes of the discrete buffer too,
+    # which `x -> Float32.(x)` turns into `Float32`s that `BlockedArray` rejects.
+    @variables x(t) = 1.0 y(t)
+    @parameters k = 2.0
+    @discretes g(t) = 1.0
+    ev = ModelingToolkitBase.SymbolicContinuousCallback(
+        [x ~ 0.5], [g ~ Pre(g) + 1]; discrete_parameters = [g]
+    )
+    @named sys = System(
+        [D(x) ~ -k * g * x, 0 ~ y^3 + y - x], t, [x, y], [k, g];
+        continuous_events = [ev], guesses = [y => 0.5]
+    )
+    sys = mtkcompile(sys)
+    f32(x) = Float32.(x)
+    prob = ODEProblem(sys, [], (0.0f0, 2.0f0); u0_constructor = f32, p_constructor = f32)
+    @test prob.p.tunable isa Vector{Float32}
+    @test only(prob.p.discrete) isa BlockedVector{Float32, Vector{Float32}}
+    sol = solve(prob, Rodas5P())
+    @test SciMLBase.successful_retcode(sol)
+    @test eltype(sol.u[end]) === Float32
+    @test eltype(sol.ps[g]) === Float32
+end
+
 @testset "In-place `FullSpecialize` with a discrete and a `Bool` constant" begin
     # The initialization map has to rebuild `p` with exactly the problem's types, since an
     # in-place solve assigns it back: `Vector` block boundaries of the discrete buffer and

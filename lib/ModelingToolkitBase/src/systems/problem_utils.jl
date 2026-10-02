@@ -1227,7 +1227,8 @@ function MTKParametersReconstructor(
         ic = get_index_cache(dstsys)
         blockarrsizes = Tuple(
             map(ic.discrete_buffer_sizes) do bufsizes
-                p_constructor(map(x -> x.length, bufsizes))
+                # `map(Int, ...)` undoes an eltype conversion `p_constructor` may apply
+                map(Int, p_constructor(map(x -> x.length, bufsizes)))
             end
         )
 

@@ -316,10 +316,13 @@ function narrow_buffer_type(buffer::BlockedArray; p_constructor = identity)
     for x in narrowed
         type = promote_type(type, typeof(x))
     end
-    tmp = p_constructor(type.(narrowed))
+    # `parent`: broadcasting over the `BlockedArray` itself would give a `BlockedArray`
+    tmp = p_constructor(type.(parent(narrowed)))
     blocks = ntuple(Val(ndims(narrowed))) do i
         bsizes = blocksizes(narrowed, i)
-        p_constructor(Int.(bsizes))
+        # `p_constructor` picks the container (e.g. `SVector` for static axes); `map(Int, ...)`
+        # undoes an eltype conversion it may apply, such as `x -> Float32.(x)`
+        map(Int, p_constructor(Int.(bsizes)))
     end
     return BlockedArray(tmp, blocks...)
 end
