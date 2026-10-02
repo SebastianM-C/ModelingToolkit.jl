@@ -273,6 +273,73 @@ end
     @test eltype(eltype(sol.u)) == Float32
 end
 
+@testset "`float_type` keyword argument" begin
+    float_eltypes(x::AbstractArray{<:AbstractFloat}) = Set{Type}([eltype(x)])
+    float_eltypes(x::AbstractArray{<:AbstractArray}) = mapreduce(float_eltypes, union, x; init = Set{Type}())
+    float_eltypes(x::Tuple) = mapreduce(float_eltypes, union, x; init = Set{Type}())
+    float_eltypes(x) = Set{Type}()
+    float_eltypes(p::ModelingToolkitBase.MTKParameters) = union(
+        float_eltypes(p.tunable), float_eltypes(p.initials),
+        float_eltypes(p.discrete), float_eltypes(p.constant)
+    )
+
+    @variables x(t) = 3.1 y(t) = 1.5
+    @parameters α = 1.3 β = 0.9 γ = 0.8 δ = 1.8
+    @mtkcompile lv = System([D(x) ~ α * x - β * x * y, D(y) ~ -δ * y + γ * x * y], t)
+
+    # parameter-dependent initial condition, a parameter solved by initialization, array
+    # parameters, a discrete updated by an event, and non-float parameters
+    @variables a(t) b(t)
+    @parameters a0 = 2.0 q tab[1:3] = [0.5, 1.0, 2.0] [tunable = false] w[1:2] = [1.0, 2.0]
+    @parameters flag::Bool = true n::Int = 2
+    @discretes g(t) = 1.0
+    ev = ModelingToolkitBase.SymbolicContinuousCallback([a ~ 1.0], [g ~ Pre(g) + 1]; discrete_parameters = [g])
+    @mtkcompile dae = System(
+        [D(a) ~ -q * g * a + 1.0e-3 * (tab[1] + w[2]) * n * flag, 0 ~ b^3 + b - a], t,
+        [a, b], [a0, q, tab, w, flag, n, g];
+        initial_conditions = [a => a0], bindings = [q => missing],
+        guesses = [b => 0.5, q => 1.0], initialization_eqs = [b ~ 1.0],
+        continuous_events = [ev]
+    )
+
+    for (sys, op, spec) in (
+            (lv, [α => 1.3], SciMLBase.AutoSpecialize),
+            (lv, [α => 1.3], SciMLBase.FullSpecialize),
+            (dae, [a0 => 2.0], SciMLBase.AutoSpecialize),
+        )
+        # the `Float64` values in `op` are converted too
+        prob = ODEProblem{true, spec}(sys, op, (0.0f0, 2.0f0); float_type = Float32)
+        @test eltype(prob.u0) === Float32
+        @test float_eltypes(prob.p) == Set([Float32])
+        integ = init(prob, Rodas5P())
+        @test eltype(integ.u) === Float32
+        @test float_eltypes(integ.p) == Set([Float32])
+        sol = solve!(integ)
+        @test SciMLBase.successful_retcode(sol)
+        @test eltype(sol.u[end]) === Float32
+    end
+    prob = ODEProblem(dae, [a0 => 2.0], (0.0f0, 2.0f0); float_type = Float32)
+    @test prob.ps[flag] isa Bool
+    @test prob.ps[n] isa Int
+    ref = solve(ODEProblem(dae, [a0 => 2.0], (0.0, 2.0)), Rodas5P(); abstol = 1.0e-10, reltol = 1.0e-10)
+    sol = solve(prob, Rodas5P())
+    @test sol[a][end] ≈ ref[a][end] rtol = 1.0e-3
+
+    # without `float_type` the type is still inferred from `op`
+    prob = ODEProblem(dae, [a0 => 2.0], (0.0, 2.0))
+    @test eltype(prob.u0) === Float64
+    @test float_eltypes(prob.p) == Set([Float64])
+
+    @mtkcompile lvns = System(
+        [D(x) ~ α * x - β * x * y, D(y) ~ -δ * y + γ * x * y], t
+    ) split = false
+    prob = ODEProblem(lvns, [], (0.0f0, 1.0f0); float_type = Float32)
+    @test eltype(prob.u0) === Float32
+    @test eltype(prob.p) === Float32
+
+    @test_throws ArgumentError ODEProblem(lv, [], (0.0, 1.0); float_type = Int)
+end
+
 @testset "Array initials and scalar parameters with `split = false`" begin
     @variables x(t)[1:2]
     @parameters p

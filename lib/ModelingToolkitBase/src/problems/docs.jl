@@ -33,6 +33,10 @@ $INITIALIZEPROB_KWARGS
   a non-split system.
 - `u0_eltype`: The `eltype` of the `u0` vector. If `nothing`, finds the promoted floating point
   type from `op`.
+- `float_type`: The floating point type of the problem, e.g. `Float32`. It applies to `u0`,
+  to every parameter (and array parameter) whose type is `Real`, and to the initialization
+  problem. If `nothing`, the type is inferred by promoting the numeric values in `op`.
+  Parameters declared with a concrete type (`@parameters p::Float64`) keep it.
 - `u0_constructor`: A function to apply to the `u0` value returned from
   [`varmap_to_vars`](@ref).
   to construct the final `u0` value.

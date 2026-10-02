@@ -2066,6 +2066,7 @@ struct SciMLProblemOptions{expression}
     floatT::Any
     u0Type::Any
     u0_eltype::Any
+    float_type::Any
     build_initializeprob::Bool
     implicit_dae::Bool
     guesses::SymmapT
@@ -2102,7 +2103,7 @@ function SciMLProblemOptions(
         # that `opts` can be constructed before `op` is known (e.g. by a caller that only
         # has keyword arguments to go on); `process_SciMLProblem(constructor, sys, op,
         # opts::SciMLProblemOptions)` always recomputes and overrides them from `op`.
-        floatT = Float64, u0Type = Nothing, u0_eltype = nothing,
+        floatT = Float64, u0Type = Nothing, u0_eltype = nothing, float_type = nothing,
         build_initializeprob::Bool = false, implicit_dae::Bool = false, guesses = AnyDict(),
         warn_initialize_determined::Bool = true, initialization_eqs = Equation[],
         fully_determined = nothing, check_initialization_units::Bool = false,
@@ -2116,13 +2117,16 @@ function SciMLProblemOptions(
         is_steadystateprob::Bool = false, return_operating_point::Bool = false,
         init_compiler_options::CompilerOptions = CompilerOptions(),
     ) where {E}
+    if float_type !== nothing && !(float_type isa Type && float_type <: AbstractFloat)
+        throw(ArgumentError("`float_type` must be `nothing` or an `AbstractFloat` type, got $float_type."))
+    end
     if !(guesses isa SymmapT)
         guesses = anydict(guesses)
         symbols_to_symbolics!(sys, guesses)
         guesses = as_atomic_dict_with_defaults(Dict{SymbolicT, SymbolicT}(guesses), COMMON_NOTHING)
     end
     return SciMLProblemOptions{E}(
-        fn_opts, floatT, u0Type, u0_eltype, build_initializeprob, implicit_dae, guesses,
+        fn_opts, floatT, u0Type, u0_eltype, float_type, build_initializeprob, implicit_dae, guesses,
         warn_initialize_determined, initialization_eqs, fully_determined,
         check_initialization_units, tofloat, u0_constructor, p_constructor, check_length,
         symbolic_u0, warn_cyclic_dependency, circular_dependency_max_cycle_length,
@@ -2426,7 +2430,8 @@ All other keyword arguments are passed as-is to `constructor`.
 """
 Base.@nospecializeinfer function process_SciMLProblem(
         @nospecialize(constructor), sys::AbstractSystem, @nospecialize(op);
-        u0_eltype = nothing, u0_constructor = identity, p_constructor = identity,
+        u0_eltype = nothing, float_type = nothing, u0_constructor = identity,
+        p_constructor = identity,
         symbolic_u0 = false,
         build_initializeprob = supports_initialization(sys),
         implicit_dae = false, t = nothing, guesses = AnyDict(),
@@ -2447,7 +2452,7 @@ Base.@nospecializeinfer function process_SciMLProblem(
     fn_opts = SciMLFunctionOptions(; t, eval_expression, eval_module, compiler_options, kwargs...)
     opts = SciMLProblemOptions(
         sys;
-        fn_opts, u0_eltype, build_initializeprob, implicit_dae, guesses,
+        fn_opts, u0_eltype, float_type, build_initializeprob, implicit_dae, guesses,
         warn_initialize_determined, initialization_eqs, fully_determined,
         check_initialization_units, tofloat, u0_constructor, p_constructor, check_length,
         symbolic_u0, warn_cyclic_dependency, circular_dependency_max_cycle_length,
@@ -2480,7 +2485,7 @@ Base.@nospecializeinfer function process_SciMLProblem(
     )
     u0Type = pType = typeof(op)
     op = operating_point_preprocess(sys, op)
-    floatT = calculate_float_type(op, u0Type)
+    floatT = something(opts.float_type, calculate_float_type(op, u0Type))
     u0_eltype = something(opts.u0_eltype, floatT)
     u0_constructor = get_u0_constructor(opts.u0_constructor, u0Type, floatT, opts.symbolic_u0)
     p_constructor = get_p_constructor(opts.p_constructor, pType, floatT)
@@ -2616,9 +2621,16 @@ function __process_SciMLProblem(
     end
 
     if is_split(sys)
-        p = MTKParameters(sys, op; floatT = floatT, p_constructor, fast_path = true)
+        p = MTKParameters(
+            sys, op; floatT = floatT, p_constructor, fast_path = true,
+            float_arrays = opts.float_type !== nothing
+        )
     else
-        p = p_constructor(varmap_to_vars(op, ps; tofloat, container_type = u0Type))
+        p = varmap_to_vars(op, ps; tofloat, container_type = u0Type)
+        if opts.float_type !== nothing && p isa AbstractArray{<:AbstractFloat}
+            p = ArrayInterface.ismutable(p) ? floatT.(p) : similar_type(p, floatT)(p)
+        end
+        p = p_constructor(p)
     end
 
     if implicit_dae

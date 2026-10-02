@@ -63,7 +63,7 @@ function InitializationProblem{iip, specialize}(
         time_dependent_init, initsys_mtkcompile_kwargs, is_steadystateprob,
         u0_constructor, p_constructor, use_scc, missing_guess_value,
         warn_cyclic_dependency, circular_dependency_max_cycle_length,
-        circular_dependency_max_cycles, init_compiler_options,
+        circular_dependency_max_cycles, init_compiler_options, float_type,
     ) = opts
     (; eval_expression, eval_module) = opts.fn_opts.codegen
     check_units = check_initialization_units
@@ -182,7 +182,7 @@ function InitializationProblem{iip, specialize}(
         _initialization_problem_constructor(TProb, _iip, specialize)
     return problem_constructor(
         isys, op; kwargs..., problem_kwargs..., check_length_kw...,
-        u0_constructor, p_constructor, missing_guess_value,
+        u0_constructor, p_constructor, missing_guess_value, float_type,
         eval_expression, eval_module, warn_cyclic_dependency,
         circular_dependency_max_cycle_length, circular_dependency_max_cycles,
         compiler_options = init_compiler_options,

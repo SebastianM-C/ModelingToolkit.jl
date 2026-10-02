@@ -97,7 +97,7 @@ function SciMLBase.LinearProblem{iip}(
         sys::System, op; check_length = true, expression = Val{false},
         check_compatibility = true, sparse = false, eval_expression = false,
         eval_module = @__MODULE__, u0_constructor = identity, u0_eltype = nothing,
-        kwargs...
+        float_type = nothing, kwargs...
     ) where {iip}
     check_complete(sys, LinearProblem)
     check_compatibility && check_compatible_system(LinearProblem, sys)
@@ -106,7 +106,7 @@ function SciMLBase.LinearProblem{iip}(
     f, u0, p, op = process_SciMLProblem(
         LinearFunction{iip}, sys, op; check_length, expression,
         build_initializeprob = false, symbolic_u0 = true, u0_constructor, u0_eltype,
-        return_operating_point = true, sparse, kwargs...
+        float_type, return_operating_point = true, sparse, kwargs...
     )
 
     if u0 !== nothing && any(x -> symbolic_type(x) != NotSymbolic() || x === nothing, u0)
@@ -114,7 +114,7 @@ function SciMLBase.LinearProblem{iip}(
     end
 
     floatT = if u0 === nothing
-        calculate_float_type(op, u0Type)
+        something(float_type, calculate_float_type(op, u0Type))
     else
         eltype(u0)
     end

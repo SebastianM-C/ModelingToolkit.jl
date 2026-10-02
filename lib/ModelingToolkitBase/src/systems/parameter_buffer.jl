@@ -59,7 +59,7 @@ the default behavior).
 function MTKParameters(
         sys::AbstractSystem, op; tofloat = false,
         t0 = nothing, substitution_limit = 1000, floatT = nothing,
-        p_constructor = identity, fast_path = false
+        p_constructor = identity, fast_path = false, float_arrays = false
     )
     ic = if has_index_cache(sys) && get_index_cache(sys) !== nothing
         get_index_cache(sys)
@@ -207,6 +207,10 @@ function MTKParameters(
         end
         if ctype == Real && floatT !== nothing
             ctype = floatT
+        elseif float_arrays && floatT !== nothing && ctype <: AbstractArray &&
+                eltype(ctype) == Real
+            # an explicit `float_type` applies to array parameters too
+            ctype = AbstractArray{floatT}
         end
         if isinitial(sym)
             if val === COMMON_NOTHING
